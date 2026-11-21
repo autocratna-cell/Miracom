@@ -7,6 +7,7 @@ import {
   googleMeetingLink,
   googleTodoLink,
 } from "./calendar-export.js";
+import { findTasks } from "./tasks.js";
 
 // ---------- 공통 ----------
 const $ = (sel) => document.querySelector(sel);
@@ -213,6 +214,7 @@ async function openMeeting(id) {
   show("meeting");
   renderMeeting();
   $("#transcript").value = meetingById(id)?.transcript || "";
+  $("#summary-text").value = meetingById(id)?.minutes?.summaryText || "";
   $("#save-state").textContent = "";
   renderAudios();
 }
@@ -246,14 +248,14 @@ function renderMeeting() {
 
 function renderMinutes(m) {
   const mm = m.minutes;
-  $("#minutes-actions").hidden = !mm;
-  if (!mm) {
-    $("#minutes").innerHTML = `<p class="muted">회의 내용을 저장한 뒤 'AI 요약'을 누르면 주요 내용·결정 사항·할 일이 정리됩니다.</p>`;
+  $("#minutes-actions").hidden = !(mm?.summary || mm?.summaryText);
+  if (!mm?.summary) {
+    $("#minutes").innerHTML = "";
     return;
   }
   const list = (items) => (items?.length ? `<ul>${items.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul>` : `<p class="muted">없음</p>`);
   $("#minutes").innerHTML = `
-    <h4>요약</h4><p>${escapeHtml(mm.summary)}</p>
+    <h4>AI 요약</h4><p>${escapeHtml(mm.summary)}</p>
     <h4>주요 논의 내용</h4>${list(mm.keyPoints)}
     <h4>결정 사항</h4>${list(mm.decisions)}
     ${mm.nextMeeting ? `<h4>다음 회의</h4><p>${escapeHtml(mm.nextMeeting)}</p>` : ""}
@@ -261,7 +263,7 @@ function renderMinutes(m) {
 }
 
 function minutesMarkdown(m) {
-  const mm = m.minutes;
+  const mm = m.minutes || {};
   const todos = state.todos.filter((t) => t.meetingId === m.id);
   const bullets = (a) => (a?.length ? a.map((i) => `- ${i}`).join("\n") : "- 없음");
   return `# 회의록: ${m.title}
@@ -269,15 +271,9 @@ function minutesMarkdown(m) {
 - 일시: ${fmtDateTime(m.start)} (${m.durationMin}분)
 - 참석자: ${m.attendees || "-"}
 ${m.agenda ? `- 안건: ${m.agenda.replace(/\n/g, " / ")}\n` : ""}
-## 요약
-${mm.summary}
-
-## 주요 논의 내용
-${bullets(mm.keyPoints)}
-
-## 결정 사항
-${bullets(mm.decisions)}
-
+${mm.summaryText ? `## 회의 요약\n${mm.summaryText.trim()}\n` : ""}${
+    mm.summary ? `\n## AI 요약\n${mm.summary}\n\n## 주요 논의 내용\n${bullets(mm.keyPoints)}\n\n## 결정 사항\n${bullets(mm.decisions)}\n` : ""
+  }
 ## 해야 할 일
 ${todos.length ? todos.map((t) => `- [${t.done ? "x" : " "}] ${t.task} (담당: ${t.owner || "-"}, 마감: ${t.dueDate || "-"})`).join("\n") : "- 없음"}
 ${mm.nextMeeting ? `\n## 다음 회의\n${mm.nextMeeting}\n` : ""}`;
@@ -376,7 +372,7 @@ async function summarize() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `요청 실패 (${res.status})`);
 
-    m.minutes = { ...data, createdAt: new Date().toISOString() };
+    m.minutes = { ...(m.minutes || {}), ...data, createdAt: new Date().toISOString() };
     await db.put("meetings", m);
 
     // AI가 뽑은 할 일을 등록 (같은 내용이 이미 있으면 건너뜀)
@@ -398,6 +394,109 @@ async function summarize() {
     btn.textContent = "AI 요약으로 회의록 작성";
   }
 }
+
+// ---------- Galaxy AI 요약 붙여넣기 / 할 일 찾기 ----------
+async function saveSummary(quiet = false) {
+  const m = meetingById(state.currentId);
+  if (!m) return;
+  const text = $("#summary-text").value.trim();
+  m.minutes = { ...(m.minutes || {}), summaryText: text, createdAt: new Date().toISOString() };
+  if (!text && !m.minutes.summary) m.minutes = null;
+  await db.put("meetings", m);
+  renderMeeting();
+  if (!quiet) toast(text ? "회의록을 저장했습니다. '할 일 자동 찾기'로 할 일을 등록해 보세요." : "회의록을 비웠습니다.");
+}
+
+async function pasteInto(sel) {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) return toast("복사된 내용이 없습니다.");
+    const el = $(sel);
+    el.value = el.value.trim() ? `${el.value.trimEnd()}\n${text}` : text;
+    el.dispatchEvent(new Event("input"));
+  } catch {
+    toast("붙여넣기 권한이 없습니다. 칸을 길게 눌러 '붙여넣기'를 해 주세요.");
+  }
+}
+
+let candidates = [];
+function openTaskFinder() {
+  const m = meetingById(state.currentId);
+  const source = [$("#summary-text").value, m.minutes?.summary].filter(Boolean).join("\n") || $("#transcript").value;
+  if (!source.trim()) return toast("먼저 회의록(요약)이나 회의 내용을 넣어 주세요.");
+  const existing = new Set(state.todos.filter((t) => t.meetingId === m.id).map((t) => t.task));
+  candidates = findTasks(source, new Date(m.start)).filter((c) => !existing.has(c.task));
+  if (!candidates.length) return toast("할 일로 보이는 문장을 찾지 못했습니다. '+ 추가'로 직접 넣어 주세요.");
+  $("#task-candidates").innerHTML = candidates
+    .map(
+      (c, i) => `<label class="item check-item"><input type="checkbox" data-cand="${i}" checked />
+      <span class="grow"><strong>${escapeHtml(c.task)}</strong><small>${c.owner ? escapeHtml(c.owner) + " · " : ""}${fmtDue(c.dueDate)}</small></span></label>`
+    )
+    .join("");
+  $("#tasks-dialog").showModal();
+}
+
+$("#tasks-dialog").addEventListener("close", async () => {
+  if ($("#tasks-dialog").returnValue !== "save") return;
+  const picked = [...document.querySelectorAll("[data-cand]")].filter((c) => c.checked).map((c) => candidates[c.dataset.cand]);
+  for (const c of picked) {
+    const todo = { id: newId(), meetingId: state.currentId, ...c, done: false, createdAt: new Date().toISOString() };
+    await db.put("todos", todo);
+    state.todos.push(todo);
+  }
+  renderMeeting();
+  toast(`할 일 ${picked.length}개를 등록했습니다.`);
+});
+
+async function addAudioFile(file) {
+  const durationSec = await new Promise((resolve) => {
+    const a = new Audio();
+    a.onloadedmetadata = () => resolve(Number.isFinite(a.duration) ? Math.round(a.duration) : 0);
+    a.onerror = () => resolve(0);
+    a.src = URL.createObjectURL(file);
+  });
+  await db.put("audios", { id: newId(), meetingId: state.currentId, blob: file, mime: file.type || "audio/mp4", durationSec, createdAt: new Date().toISOString() });
+  renderAudios();
+  toast("녹음 파일을 이 회의에 저장했습니다.");
+}
+
+// 다른 앱(음성 녹음 등)에서 '공유 → BMS'로 받은 텍스트
+let sharedText = "";
+function handleShare() {
+  const params = new URLSearchParams(location.search);
+  sharedText = [params.get("share_title"), params.get("share_text"), params.get("share_url")].filter(Boolean).join("\n").trim();
+  if (!sharedText) return;
+  history.replaceState(null, "", location.pathname);
+  $("#share-preview").textContent = sharedText.length > 300 ? sharedText.slice(0, 300) + "…" : sharedText;
+  const nowIso = toLocalInput(new Date());
+  // 오늘 회의 → 최근 지난 회의 → 다가오는 회의 순으로 보여줌
+  const sorted = [...state.meetings].sort((a, b) => Math.abs(new Date(a.start) - Date.now()) - Math.abs(new Date(b.start) - Date.now()));
+  $("#share-meeting").innerHTML =
+    sorted.map((m) => `<option value="${m.id}">${escapeHtml(m.title)} · ${fmtDateTime(m.start)}</option>`).join("") +
+    `<option value="__new">+ 새 회의로 만들기 (${fmtDateTime(nowIso)})</option>`;
+  $("#share-dialog").showModal();
+}
+
+$("#share-dialog").addEventListener("close", async () => {
+  if ($("#share-dialog").returnValue !== "save" || !sharedText) return;
+  const f = $("#share-form");
+  let m;
+  if (f.meeting.value === "__new") {
+    const now = new Date();
+    m = { id: newId(), title: `회의 ${now.getMonth() + 1}/${now.getDate()}`, series: "", start: toLocalInput(now), durationMin: 60, attendees: "", agenda: "", transcript: "", minutes: null, createdAt: now.toISOString() };
+    state.meetings.push(m);
+  } else m = meetingById(f.meeting.value);
+  if (f.target.value === "summary") {
+    const prev = m.minutes?.summaryText?.trim();
+    m.minutes = { ...(m.minutes || {}), summaryText: prev ? `${prev}\n\n${sharedText}` : sharedText, createdAt: new Date().toISOString() };
+  } else {
+    m.transcript = m.transcript?.trim() ? `${m.transcript.trimEnd()}\n${sharedText}` : sharedText;
+  }
+  await db.put("meetings", m);
+  sharedText = "";
+  await openMeeting(m.id);
+  toast("공유 받은 내용을 저장했습니다.");
+});
 
 // ---------- 회의 등록/수정 ----------
 let editingMeetingId = null;
@@ -575,6 +674,25 @@ $("#rec-btn").onclick = toggleRecording;
 $("#save-transcript-btn").onclick = () => saveTranscript();
 $("#transcript").addEventListener("input", () => ($("#save-state").textContent = "저장 안 됨"));
 $("#summarize-btn").onclick = summarize;
+$("#save-summary-btn").onclick = () => saveSummary();
+$("#paste-summary-btn").onclick = () => pasteInto("#summary-text");
+$("#paste-transcript-btn").onclick = () => pasteInto("#transcript");
+$("#find-tasks-btn").onclick = async () => {
+  await saveSummary(true);
+  openTaskFinder();
+};
+$("#transcript-file").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const ta = $("#transcript");
+  ta.value = ta.value.trim() ? `${ta.value.trimEnd()}\n${await file.text()}` : await file.text();
+  e.target.value = "";
+  await saveTranscript();
+};
+$("#audio-file").onchange = (e) => {
+  if (e.target.files[0]) addAudioFile(e.target.files[0]);
+  e.target.value = "";
+};
 $("#add-todo-btn").onclick = () =>
   openTodoForm({ id: newId(), meetingId: state.currentId, task: "", owner: "", dueDate: "", done: false, createdAt: new Date().toISOString() });
 $("#ics-btn").onclick = () => {
@@ -643,6 +761,12 @@ window.addEventListener("beforeunload", (e) => {
   setInterval(checkReminders, 30000);
   fetch("api/health")
     .then((r) => r.json())
-    .then((h) => ($("#ai-state").textContent = h.aiConfigured ? "AI 요약 사용 가능 ✓" : "서버에 API 키가 없어 AI 요약을 쓸 수 없습니다. (README 참고)"))
-    .catch(() => ($("#ai-state").textContent = "서버에 연결할 수 없습니다."));
+    .then((h) => {
+      $("#summarize-btn").hidden = !h.aiConfigured;
+      $("#ai-state").textContent = h.aiConfigured
+        ? "Galaxy AI 요약 붙여넣기 + 서버 AI 요약 모두 사용 가능 ✓"
+        : "Galaxy AI 요약 붙여넣기 방식을 사용합니다. (API 키 필요 없음)";
+    })
+    .catch(() => ($("#ai-state").textContent = "Galaxy AI 요약 붙여넣기 방식을 사용합니다. (API 키 필요 없음)"));
+  handleShare();
 })();

@@ -1,0 +1,33 @@
+# BMS 웹앱(BMS/public)을 GitHub Pages에 올립니다.
+# 처음 한 번: 저장소 Settings → Pages → Build and deployment → Source를 "GitHub Actions"로 바꿔 주세요.
+name: Deploy BMS to GitHub Pages
+
+on:
+  push:
+    branches: [main, ccr-4cffe935-q0o2bs]
+    paths: ["BMS/public/**", ".github/workflows/deploy-bms.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: BMS/public
+      - id: deployment
+        uses: actions/deploy-pages@v4

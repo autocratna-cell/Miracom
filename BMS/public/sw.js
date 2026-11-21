@@ -1,5 +1,5 @@
 // 서비스 워커: 앱 화면 캐시(오프라인에서도 열림) + 알림 클릭 처리
-const CACHE = "bms-v1";
+const CACHE = "bms-v2";
 const ASSETS = [
   "./",
   "index.html",
@@ -10,6 +10,7 @@ const ASSETS = [
   "js/db.js",
   "js/recorder.js",
   "js/calendar-export.js",
+  "js/tasks.js",
 ];
 
 self.addEventListener("install", (e) => {
@@ -35,7 +36,7 @@ self.addEventListener("fetch", (e) => {
         caches.open(CACHE).then((c) => c.put(e.request, copy));
         return res;
       })
-      .catch(() => caches.match(e.request))
+      .catch(() => caches.match(e.request, { ignoreSearch: true }))
   );
 });
 
