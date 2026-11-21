@@ -1,5 +1,5 @@
 // 서비스 워커: 앱 화면 캐시(오프라인에서도 열림) + 알림 클릭 처리
-const CACHE = "bms-v3";
+const CACHE = "bms-v4";
 const ASSETS = [
   "./",
   "index.html",

@@ -1,5 +1,5 @@
 import { db, newId } from "./db.js";
-import { MeetingRecorder, support, fmtClock } from "./recorder.js";
+import { MeetingRecorder, support, isAndroid, fmtClock } from "./recorder.js";
 import {
   meetingEvent,
   todoEvent,
@@ -243,6 +243,8 @@ function renderMeeting() {
   const notes = [];
   if (!support.record) notes.push("이 브라우저는 녹음을 지원하지 않습니다.");
   if (!support.speech) notes.push("이 브라우저는 실시간 받아쓰기를 지원하지 않습니다(크롬 권장). 텍스트를 직접 입력해 주세요.");
+  if (isAndroid && support.speech)
+    notes.push("안드로이드에서는 녹음과 받아쓰기를 동시에 할 수 없어, 둘 다 켜면 받아쓰기만 합니다.");
   $("#support-note").textContent = notes.join(" ");
 }
 
@@ -337,7 +339,11 @@ async function toggleRecording() {
       $("#rec-time").textContent = fmtClock(sec);
       if (sec % 30 === 0) saveTranscript(true); // 30초마다 자동 저장
     },
-    onError: toast,
+    onError: (msg) => {
+      $("#interim").textContent = `⚠️ ${msg}`;
+      toast(msg);
+    },
+    onInfo: toast,
   });
   try {
     await recorder.start({ record, transcribe });
