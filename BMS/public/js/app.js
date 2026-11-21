@@ -751,10 +751,46 @@ window.addEventListener("beforeunload", (e) => {
   if (recorder?.active) e.preventDefault();
 });
 
+// ---------- 앱 설치 ----------
+let installPrompt = null;
+const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+function updateInstallUi() {
+  const canPrompt = Boolean(installPrompt) && !isStandalone();
+  $("#install-btn").hidden = !canPrompt;
+  $("#install-banner").hidden = !canPrompt;
+  let msg;
+  if (isStandalone()) msg = "설치된 앱으로 실행 중입니다 ✓";
+  else if (canPrompt) msg = "위 버튼을 누르면 홈 화면에 BMS 앱이 설치됩니다.";
+  else if (/SamsungBrowser/.test(navigator.userAgent))
+    msg = "삼성 인터넷에서는 주소창의 ⬇(설치) 아이콘, 또는 메뉴(≡) → '현재 페이지 추가' → '홈 화면'으로 설치하세요. 음성 녹음 앱의 '공유 → BMS'까지 쓰려면 크롬에서 설치하는 것을 권장합니다.";
+  else msg = "크롬 메뉴(⋮) → '홈 화면에 추가' → '설치'를 누르세요. (설치 버튼이 바로 안 보이면 페이지를 한 번 새로고침해 주세요.)";
+  $("#install-state").textContent = msg;
+}
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  updateInstallUi();
+});
+window.addEventListener("appinstalled", () => {
+  installPrompt = null;
+  updateInstallUi();
+  toast("BMS 앱이 설치되었습니다. 홈 화면에서 실행하세요.");
+});
+async function promptInstall() {
+  if (!installPrompt) return goTab("settings");
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+  updateInstallUi();
+}
+$("#install-btn").onclick = promptInstall;
+$("#install-banner-btn").onclick = promptInstall;
+
 // ---------- 시작 ----------
 (async function init() {
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   await load();
+  updateInstallUi();
   show("calendar");
   render();
   checkReminders();

@@ -172,3 +172,5 @@ dialog h2 { margin-top: 0; }
 .share-preview { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font-size: 14px; white-space: pre-wrap; max-height: 160px; overflow: auto; }
 #find-tasks-btn { width: 100%; justify-content: center; margin-bottom: 10px; }
 #summary-text { min-height: 140px; }
+.install-banner { display: flex; align-items: center; gap: 10px; background: var(--soft); border: 1px solid var(--primary); border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px; }
+.install-banner span { flex: 1; }

@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#1f6feb" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -19,6 +20,10 @@
   <main>
     <!-- 1. 회의 일정 (캘린더) -->
     <section id="view-calendar" class="view">
+      <div class="install-banner" id="install-banner" hidden>
+        <span>📲 BMS를 앱으로 설치하면 음성 녹음 앱에서 <b>공유 → BMS</b>를 쓸 수 있어요.</span>
+        <button class="primary small" id="install-banner-btn">설치</button>
+      </div>
       <div class="month-nav">
         <button class="icon-btn" id="prev-month" aria-label="이전 달">‹</button>
         <strong id="month-label"></strong>
@@ -137,6 +142,11 @@
 
     <!-- 4. 설정 -->
     <section id="view-settings" class="view" hidden>
+      <div class="card" id="install-card">
+        <h3>📲 앱 설치</h3>
+        <button class="primary small" id="install-btn" hidden>BMS 앱 설치하기</button>
+        <p class="muted small" id="install-state"></p>
+      </div>
       <div class="card">
         <h3>알림</h3>
         <label>회의 시작 몇 분 전에 알릴까요?
