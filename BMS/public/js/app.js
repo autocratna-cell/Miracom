@@ -1,5 +1,5 @@
 import { db, newId } from "./db.js";
-import { MeetingRecorder, support, isAndroid, fmtClock } from "./recorder.js";
+import { MeetingRecorder, support, fmtClock } from "./recorder.js";
 import {
   meetingEvent,
   todoEvent,
@@ -241,10 +241,7 @@ function renderMeeting() {
   $("#m-todos").innerHTML = todos.map(todoItem).join("") || `<p class="muted">아직 할 일이 없습니다.</p>`;
 
   const notes = [];
-  if (!support.record) notes.push("이 브라우저는 녹음을 지원하지 않습니다.");
-  if (!support.speech) notes.push("이 브라우저는 실시간 받아쓰기를 지원하지 않습니다(크롬 권장). 텍스트를 직접 입력해 주세요.");
-  if (isAndroid && support.speech)
-    notes.push("안드로이드에서는 녹음과 받아쓰기를 동시에 할 수 없어, 둘 다 켜면 받아쓰기만 합니다.");
+  if (!support.record) notes.push("이 브라우저는 녹음을 지원하지 않습니다. 크롬을 사용해 주세요.");
   $("#support-note").textContent = notes.join(" ");
 }
 
@@ -308,53 +305,99 @@ async function renderAudios() {
     });
 }
 
-async function toggleRecording() {
-  const btn = $("#rec-btn");
-  if (recorder?.active) {
-    btn.disabled = true;
-    const { blob, mime, durationSec } = await recorder.stop();
-    if (blob?.size) {
-      await db.put("audios", { id: newId(), meetingId: state.currentId, blob, mime, durationSec, createdAt: new Date().toISOString() });
-    }
-    await saveTranscript(true);
-    btn.textContent = "● 녹음 시작";
-    btn.classList.remove("on");
-    btn.disabled = false;
-    renderAudios();
-    toast("녹음을 마쳤습니다.");
-    return;
-  }
-  const record = $("#opt-record").checked;
-  const transcribe = $("#opt-transcribe").checked;
-  if (!record && !transcribe) return toast("녹음 또는 받아쓰기 중 하나는 켜 주세요.");
-  const ta = $("#transcript");
+// 녹음 중에는 회의 내용 메모장만 전체 화면으로 보여줌
+let wakeLock = null;
+async function startRecording() {
+  if (!support.record) return toast("이 브라우저는 녹음을 지원하지 않습니다. 크롬을 사용해 주세요.");
   recorder = new MeetingRecorder({
-    onText(text, sec) {
-      if (!text) return;
-      ta.value += `${ta.value && !ta.value.endsWith("\n") ? "\n" : ""}[${fmtClock(sec)}] ${text}\n`;
-      ta.scrollTop = ta.scrollHeight;
-    },
-    onInterim: (t) => ($("#interim").textContent = t),
     onTick: (sec) => {
-      $("#rec-time").textContent = fmtClock(sec);
-      if (sec % 30 === 0) saveTranscript(true); // 30초마다 자동 저장
+      $("#focus-time").textContent = fmtClock(sec);
+      if (sec % 15 === 0) saveFocusMemo(); // 15초마다 자동 저장
     },
-    onError: (msg) => {
-      $("#interim").textContent = `⚠️ ${msg}`;
-      toast(msg);
-    },
-    onInfo: toast,
   });
   try {
-    await recorder.start({ record, transcribe });
-    btn.textContent = "■ 녹음 멈추기";
-    btn.classList.add("on");
+    await recorder.start();
   } catch (err) {
-    recorder.active = false;
-    toast("마이크를 사용할 수 없습니다. 브라우저의 마이크 권한을 허용해 주세요.");
     console.error(err);
+    return toast("마이크를 사용할 수 없습니다. 마이크 권한을 허용하고, 다른 앱(음성 녹음 등)이 마이크를 쓰고 있지 않은지 확인해 주세요.");
   }
+  const memo = $("#focus-memo");
+  memo.value = meetingById(state.currentId)?.transcript || "";
+  $("#focus-time").textContent = "00:00";
+  $("#focus-mode").hidden = false;
+  document.body.classList.add("focus-on");
+  history.pushState({ focus: true }, "");
+  try {
+    await document.documentElement.requestFullscreen?.({ navigationUI: "hide" });
+  } catch {
+    /* 전체 화면 미지원 */
+  }
+  try {
+    wakeLock = await navigator.wakeLock?.request("screen"); // 회의 중 화면 꺼짐 방지
+    wakeLock?.addEventListener("release", () => (wakeLock = null));
+  } catch {
+    /* 미지원 */
+  }
+  memo.focus();
+  memo.setSelectionRange(memo.value.length, memo.value.length);
 }
+
+async function saveFocusMemo() {
+  const m = meetingById(state.currentId);
+  if (!m) return;
+  m.transcript = $("#focus-memo").value;
+  await db.put("meetings", m);
+}
+
+async function stopRecording() {
+  if (!recorder?.active) return;
+  $("#stop-btn").disabled = true;
+  const { blob, mime, durationSec } = await recorder.stop();
+  if (blob?.size) {
+    await db.put("audios", { id: newId(), meetingId: state.currentId, blob, mime, durationSec, createdAt: new Date().toISOString() });
+  }
+  await saveFocusMemo();
+  $("#transcript").value = meetingById(state.currentId).transcript;
+  $("#focus-mode").hidden = true;
+  $("#stop-btn").disabled = false;
+  document.body.classList.remove("focus-on");
+  if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  wakeLock?.release?.().catch(() => {});
+  wakeLock = null;
+  if (history.state?.focus) history.back();
+  renderAudios();
+  toast(`녹음을 저장했습니다 (${fmtClock(durationSec)}).`);
+}
+
+// 메모에 현재 녹음 시간 [mm:ss] 넣기
+function insertStamp() {
+  const memo = $("#focus-memo");
+  const stamp = `[${fmtClock(recorder?.elapsed() ?? 0)}] `;
+  const pos = memo.selectionStart ?? memo.value.length;
+  const before = memo.value.slice(0, pos);
+  const prefix = before && !before.endsWith("\n") ? "\n" : "";
+  memo.setRangeText(prefix + stamp, pos, memo.selectionEnd ?? pos, "end");
+  memo.focus();
+}
+
+// 녹음 중 뒤로가기를 누르면 화면을 닫지 않고 안내
+window.addEventListener("popstate", () => {
+  if (recorder?.active) {
+    history.pushState({ focus: true }, "");
+    toast("녹음 중입니다. 끝내려면 '■ 녹음 종료'를 눌러 주세요.");
+  }
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && recorder?.active && !wakeLock) {
+    navigator.wakeLock
+      ?.request("screen")
+      .then((l) => {
+        wakeLock = l;
+        l.addEventListener("release", () => (wakeLock = null));
+      })
+      .catch(() => {});
+  }
+});
 
 async function summarize() {
   const m = meetingById(state.currentId);
@@ -676,7 +719,10 @@ $("#today-btn").onclick = () => {
 };
 $("#show-done").onchange = renderTodos;
 $("#edit-meeting-btn").onclick = () => openMeetingForm(meetingById(state.currentId));
-$("#rec-btn").onclick = toggleRecording;
+$("#rec-btn").onclick = startRecording;
+$("#stop-btn").onclick = stopRecording;
+$("#stamp-btn").onclick = insertStamp;
+$("#focus-memo").addEventListener("blur", saveFocusMemo);
 $("#save-transcript-btn").onclick = () => saveTranscript();
 $("#transcript").addEventListener("input", () => ($("#save-state").textContent = "저장 안 됨"));
 $("#summarize-btn").onclick = summarize;

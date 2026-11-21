@@ -62,7 +62,7 @@
       </div>
 
       <div class="card">
-        <h3>🎙 회의 녹음 · 받아쓰기</h3>
+        <h3>🎙 회의 녹음</h3>
         <details class="tip">
           <summary>💡 갤럭시 음성 녹음 앱으로 더 정확하게</summary>
           <ol>
@@ -72,23 +72,18 @@
           </ol>
           <p class="muted small">녹음 파일(.m4a)도 아래 '녹음 파일 불러오기'로 이 회의에 함께 보관할 수 있습니다.</p>
         </details>
-        <div class="row wrap">
-          <label class="check"><input type="checkbox" id="opt-record" checked /> 녹음 파일 저장</label>
-          <label class="check"><input type="checkbox" id="opt-transcribe" checked /> 실시간 받아쓰기</label>
-        </div>
         <div class="rec-bar">
           <button class="rec-btn" id="rec-btn">● 녹음 시작</button>
-          <span id="rec-time" class="mono">00:00</span>
+          <span class="muted small">녹음하는 동안 회의 내용 메모장이 전체 화면으로 열립니다.</span>
         </div>
         <p id="support-note" class="muted small"></p>
-        <p id="interim" class="interim"></p>
         <label class="ghost small btn">녹음 파일 불러오기<input type="file" id="audio-file" accept="audio/*" hidden /></label>
         <div id="audio-list"></div>
       </div>
 
       <div class="card">
         <h3>📝 회의 내용 (텍스트)</h3>
-        <textarea id="transcript" rows="10" placeholder="녹음하면 여기에 받아쓰기가 자동으로 들어갑니다. 직접 입력하거나 붙여넣어도 됩니다."></textarea>
+        <textarea id="transcript" rows="10" placeholder="회의 내용을 메모하거나, 음성 녹음 앱의 텍스트 변환 결과를 붙여 넣으세요."></textarea>
         <div class="row wrap">
           <button class="ghost small" id="save-transcript-btn">텍스트 저장</button>
           <button class="ghost small" id="paste-transcript-btn">붙여넣기</button>
@@ -208,6 +203,17 @@
       </div>
     </form>
   </dialog>
+
+  <!-- 녹음 중 전체 화면 메모 -->
+  <section id="focus-mode" class="focus-mode" hidden>
+    <div class="focus-bar">
+      <span class="rec-dot"></span>
+      <span id="focus-time" class="mono">00:00</span>
+      <button class="ghost small" id="stamp-btn" title="메모에 현재 녹음 시간 넣기">⏱ 시간</button>
+      <button class="rec-btn stop" id="stop-btn">■ 녹음 종료</button>
+    </div>
+    <textarea id="focus-memo" placeholder="회의 내용을 메모하세요. 자동으로 저장됩니다."></textarea>
+  </section>
 
   <!-- 할 일 추가/수정 -->
   <dialog id="todo-dialog">
