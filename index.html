@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>BMS 회의관리</title>
+  <meta name="theme-color" content="#1f6feb" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn" id="back-btn" hidden aria-label="뒤로">‹</button>
+    <h1 id="page-title">회의 일정</h1>
+    <button class="primary small" id="new-meeting-btn">+ 새 회의</button>
+  </header>
+
+  <main>
+    <!-- 1. 회의 일정 (캘린더) -->
+    <section id="view-calendar" class="view">
+      <div class="month-nav">
+        <button class="icon-btn" id="prev-month" aria-label="이전 달">‹</button>
+        <strong id="month-label"></strong>
+        <button class="icon-btn" id="next-month" aria-label="다음 달">›</button>
+        <button class="ghost small" id="today-btn">오늘</button>
+      </div>
+      <div class="weekdays"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+      <div id="month-grid" class="month-grid"></div>
+      <div class="legend"><span class="dot meeting"></span>회의 <span class="dot todo"></span>할 일 마감</div>
+      <h2 id="day-label"></h2>
+      <div id="day-list" class="list"></div>
+      <h2>다가오는 회의</h2>
+      <div id="upcoming-list" class="list"></div>
+    </section>
+
+    <!-- 2. 회의 상세 -->
+    <section id="view-meeting" class="view" hidden>
+      <div class="card">
+        <div class="meeting-head">
+          <div>
+            <h2 id="m-title"></h2>
+            <p class="muted" id="m-meta"></p>
+          </div>
+          <button class="ghost small" id="edit-meeting-btn">수정</button>
+        </div>
+        <p id="m-agenda" class="pre"></p>
+        <div class="row wrap">
+          <a class="ghost small btn" id="gcal-link" target="_blank" rel="noopener">구글 캘린더에 추가</a>
+          <button class="ghost small" id="ics-btn">캘린더 파일(.ics) 받기</button>
+        </div>
+      </div>
+
+      <div class="card" id="carried-card" hidden>
+        <h3>⏰ 지난 회의에서 넘어온 할 일</h3>
+        <ul id="carried-list" class="checklist"></ul>
+      </div>
+
+      <div class="card">
+        <h3>🎙 회의 녹음 · 받아쓰기</h3>
+        <details class="tip">
+          <summary>💡 갤럭시 음성 녹음 앱으로 더 정확하게</summary>
+          <ol>
+            <li>갤럭시 <b>음성 녹음</b> 앱으로 회의를 녹음합니다.</li>
+            <li>녹음 파일을 열고 <b>텍스트 변환</b> → <b>요약</b>(Galaxy AI)을 누릅니다.</li>
+            <li><b>공유 → BMS</b>를 누르거나, 복사해서 아래 칸에 붙여 넣습니다.</li>
+          </ol>
+          <p class="muted small">녹음 파일(.m4a)도 아래 '녹음 파일 불러오기'로 이 회의에 함께 보관할 수 있습니다.</p>
+        </details>
+        <div class="row wrap">
+          <label class="check"><input type="checkbox" id="opt-record" checked /> 녹음 파일 저장</label>
+          <label class="check"><input type="checkbox" id="opt-transcribe" checked /> 실시간 받아쓰기</label>
+        </div>
+        <div class="rec-bar">
+          <button class="rec-btn" id="rec-btn">● 녹음 시작</button>
+          <span id="rec-time" class="mono">00:00</span>
+        </div>
+        <p id="support-note" class="muted small"></p>
+        <p id="interim" class="interim"></p>
+        <label class="ghost small btn">녹음 파일 불러오기<input type="file" id="audio-file" accept="audio/*" hidden /></label>
+        <div id="audio-list"></div>
+      </div>
+
+      <div class="card">
+        <h3>📝 회의 내용 (텍스트)</h3>
+        <textarea id="transcript" rows="10" placeholder="녹음하면 여기에 받아쓰기가 자동으로 들어갑니다. 직접 입력하거나 붙여넣어도 됩니다."></textarea>
+        <div class="row wrap">
+          <button class="ghost small" id="save-transcript-btn">텍스트 저장</button>
+          <button class="ghost small" id="paste-transcript-btn">붙여넣기</button>
+          <label class="ghost small btn">텍스트 파일 불러오기<input type="file" id="transcript-file" accept=".txt,text/plain" hidden /></label>
+          <span id="save-state" class="muted small"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="meeting-head">
+          <h3>📄 회의록</h3>
+          <button class="primary small" id="summarize-btn" hidden>AI 요약으로 회의록 작성</button>
+        </div>
+        <label>Galaxy AI 요약 붙여넣기
+          <textarea id="summary-text" rows="8" placeholder="음성 녹음 앱의 '요약' 결과를 여기에 붙여 넣거나 직접 정리해 적으세요."></textarea>
+        </label>
+        <div class="row wrap">
+          <button class="primary small" id="save-summary-btn">회의록 저장</button>
+          <button class="ghost small" id="paste-summary-btn">붙여넣기</button>
+        </div>
+        <div id="minutes" class="minutes"></div>
+        <div class="row wrap" id="minutes-actions" hidden>
+          <button class="ghost small" id="copy-minutes-btn">회의록 복사</button>
+          <button class="ghost small" id="download-minutes-btn">회의록 파일(.md) 받기</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="meeting-head">
+          <h3>✅ 해야 할 일</h3>
+          <button class="ghost small" id="add-todo-btn">+ 추가</button>
+        </div>
+        <button class="primary small" id="find-tasks-btn">🔍 회의록에서 할 일 자동 찾기</button>
+        <div id="m-todos" class="list"></div>
+        <div class="row wrap">
+          <button class="ghost small" id="todos-ics-btn">할 일 전체를 캘린더 파일로 받기</button>
+          <button class="ghost small" id="next-meeting-btn">다음 회의 잡기</button>
+        </div>
+      </div>
+
+      <button class="danger small" id="delete-meeting-btn">회의 삭제</button>
+    </section>
+
+    <!-- 3. 할 일 -->
+    <section id="view-todos" class="view" hidden>
+      <div class="row wrap">
+        <label class="check"><input type="checkbox" id="show-done" /> 완료한 일도 보기</label>
+      </div>
+      <div id="todo-list" class="list"></div>
+    </section>
+
+    <!-- 4. 설정 -->
+    <section id="view-settings" class="view" hidden>
+      <div class="card">
+        <h3>알림</h3>
+        <label>회의 시작 몇 분 전에 알릴까요?
+          <select id="remind-min">
+            <option value="5">5분 전</option>
+            <option value="10">10분 전</option>
+            <option value="30">30분 전</option>
+            <option value="60">1시간 전</option>
+          </select>
+        </label>
+        <button class="ghost small" id="notif-btn">알림 권한 허용</button>
+        <button class="ghost small" id="notif-test-btn">알림 테스트</button>
+        <p class="muted small" id="notif-state"></p>
+        <p class="muted small">앱 알림은 이 화면이 열려 있을 때(백그라운드 탭 포함) 울립니다. 휴대폰이 꺼져 있어도 확실히 받으려면 회의 화면에서 '캘린더 파일(.ics) 받기'로 휴대폰 캘린더에 등록하세요. 캘린더 일정에도 같은 알림과 할 일 목록이 들어갑니다.</p>
+      </div>
+      <div class="card">
+        <h3>회의록 요약 방식</h3>
+        <p id="ai-state" class="muted small">확인 중…</p>
+      </div>
+      <div class="card">
+        <h3>데이터 백업</h3>
+        <p class="muted small">회의·할 일은 이 기기 브라우저에 저장됩니다. (녹음 파일 제외)</p>
+        <div class="row wrap">
+          <button class="ghost small" id="export-btn">백업 파일 받기</button>
+          <label class="ghost small btn">백업 불러오기<input type="file" id="import-file" accept="application/json" hidden /></label>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button data-tab="calendar" class="active">📅<span>일정</span></button>
+    <button data-tab="todos">✅<span>할 일</span></button>
+    <button data-tab="settings">⚙️<span>설정</span></button>
+  </nav>
+
+  <!-- 회의 등록/수정 -->
+  <dialog id="meeting-dialog">
+    <form method="dialog" id="meeting-form">
+      <h2 id="meeting-form-title">새 회의</h2>
+      <label>회의 제목 <input name="title" required placeholder="예: 주간 영업 회의" /></label>
+      <label>회의 그룹 <input name="series" list="series-options" placeholder="예: 주간 영업 (같은 그룹끼리 할 일이 이어집니다)" /></label>
+      <datalist id="series-options"></datalist>
+      <div class="row">
+        <label>날짜 <input type="date" name="date" required /></label>
+        <label>시간 <input type="time" name="time" required /></label>
+      </div>
+      <label>진행 시간
+        <select name="durationMin">
+          <option value="30">30분</option><option value="60" selected>1시간</option>
+          <option value="90">1시간 30분</option><option value="120">2시간</option>
+        </select>
+      </label>
+      <label>참석자 <input name="attendees" placeholder="예: 김부장, 이과장, 박대리" /></label>
+      <label>안건 <textarea name="agenda" rows="3"></textarea></label>
+      <div class="row end">
+        <button value="cancel" class="ghost" formnovalidate>취소</button>
+        <button value="save" class="primary">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 할 일 추가/수정 -->
+  <dialog id="todo-dialog">
+    <form method="dialog" id="todo-form">
+      <h2>할 일</h2>
+      <label>내용 <input name="task" required /></label>
+      <label>담당자 <input name="owner" /></label>
+      <label>마감일 <input type="date" name="dueDate" /></label>
+      <div class="row end">
+        <button value="cancel" class="ghost" formnovalidate>취소</button>
+        <button value="save" class="primary">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 할 일 후보 -->
+  <dialog id="tasks-dialog">
+    <form method="dialog">
+      <h2>찾은 할 일</h2>
+      <p class="muted small">등록할 항목을 고르세요. 등록 후 항목을 눌러 담당자·마감일을 고칠 수 있습니다.</p>
+      <div id="task-candidates" class="list"></div>
+      <div class="row end">
+        <button value="cancel" class="ghost">취소</button>
+        <button value="save" class="primary">선택한 할 일 등록</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 다른 앱에서 공유 받은 내용 -->
+  <dialog id="share-dialog">
+    <form method="dialog" id="share-form">
+      <h2>공유 받은 내용 저장</h2>
+      <p id="share-preview" class="share-preview"></p>
+      <label>어느 회의에 저장할까요?
+        <select name="meeting" id="share-meeting"></select>
+      </label>
+      <label>저장할 곳
+        <select name="target">
+          <option value="summary">회의록 (요약)</option>
+          <option value="transcript">회의 내용 (받아쓰기 텍스트)</option>
+        </select>
+      </label>
+      <div class="row end">
+        <button value="cancel" class="ghost" formnovalidate>취소</button>
+        <button value="save" class="primary">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
