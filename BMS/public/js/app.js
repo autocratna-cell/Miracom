@@ -311,7 +311,6 @@ async function startRecording() {
   if (!support.record) return toast("이 브라우저는 녹음을 지원하지 않습니다. 크롬을 사용해 주세요.");
   recorder = new MeetingRecorder({
     onTick: (sec) => {
-      $("#focus-time").textContent = fmtClock(sec);
       if (sec % 15 === 0) saveFocusMemo(); // 15초마다 자동 저장
     },
   });
@@ -323,7 +322,6 @@ async function startRecording() {
   }
   const memo = $("#focus-memo");
   memo.value = meetingById(state.currentId)?.transcript || "";
-  $("#focus-time").textContent = "00:00";
   $("#focus-mode").hidden = false;
   document.body.classList.add("focus-on");
   history.pushState({ focus: true }, "");
@@ -366,25 +364,14 @@ async function stopRecording() {
   wakeLock = null;
   if (history.state?.focus) history.back();
   renderAudios();
-  toast(`녹음을 저장했습니다 (${fmtClock(durationSec)}).`);
-}
-
-// 메모에 현재 녹음 시간 [mm:ss] 넣기
-function insertStamp() {
-  const memo = $("#focus-memo");
-  const stamp = `[${fmtClock(recorder?.elapsed() ?? 0)}] `;
-  const pos = memo.selectionStart ?? memo.value.length;
-  const before = memo.value.slice(0, pos);
-  const prefix = before && !before.endsWith("\n") ? "\n" : "";
-  memo.setRangeText(prefix + stamp, pos, memo.selectionEnd ?? pos, "end");
-  memo.focus();
+  toast(`회의 메모와 녹음(${fmtClock(durationSec)})을 저장했습니다.`);
 }
 
 // 녹음 중 뒤로가기를 누르면 화면을 닫지 않고 안내
 window.addEventListener("popstate", () => {
   if (recorder?.active) {
     history.pushState({ focus: true }, "");
-    toast("녹음 중입니다. 끝내려면 '■ 녹음 종료'를 눌러 주세요.");
+    toast("회의 메모 화면을 나가려면 '회의정보 보기'를 눌러 주세요.");
   }
 });
 document.addEventListener("visibilitychange", () => {
@@ -721,7 +708,6 @@ $("#show-done").onchange = renderTodos;
 $("#edit-meeting-btn").onclick = () => openMeetingForm(meetingById(state.currentId));
 $("#rec-btn").onclick = startRecording;
 $("#stop-btn").onclick = stopRecording;
-$("#stamp-btn").onclick = insertStamp;
 $("#focus-memo").addEventListener("blur", saveFocusMemo);
 $("#save-transcript-btn").onclick = () => saveTranscript();
 $("#transcript").addEventListener("input", () => ($("#save-state").textContent = "저장 안 됨"));
