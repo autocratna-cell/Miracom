@@ -497,37 +497,110 @@ $("#tasks-dialog").addEventListener("close", async () => {
   toast(`할 일 ${picked.length}개를 등록했습니다.`);
 });
 
-async function addAudioFile(file) {
-  const durationSec = await new Promise((resolve) => {
+function audioDuration(file) {
+  return new Promise((resolve) => {
     const a = new Audio();
     a.onloadedmetadata = () => resolve(Number.isFinite(a.duration) ? Math.round(a.duration) : 0);
     a.onerror = () => resolve(0);
     a.src = URL.createObjectURL(file);
   });
+}
+
+async function addAudioFile(file) {
+  const durationSec = await audioDuration(file);
   await db.put("audios", { id: newId(), meetingId: state.currentId, blob: file, mime: file.type || "audio/mp4", durationSec, createdAt: new Date().toISOString() });
   renderAudios();
   toast("녹음 파일을 이 회의에 저장했습니다.");
 }
 
-// 다른 앱(음성 녹음 등)에서 '공유 → BMS'로 받은 텍스트
-let sharedText = "";
-function handleShare() {
+// 다른 앱(음성 녹음 등)에서 '공유 → BMS'로 받은 텍스트·파일
+let shared = null; // { text, files: [File] }
+const SAMSUNG_RECORDER = "com.sec.android.app.voicenote";
+const isAndroid = /Android/i.test(navigator.userAgent);
+
+// 음성 녹음 앱을 열기 전 어떤 회의였는지 기억 → 공유 받을 때 그 회의를 먼저 선택
+function openGalaxyRecorder() {
+  safeStorage.set("bms.recordingFor", JSON.stringify({ id: state.currentId, at: Date.now() }));
+  location.href = `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${SAMSUNG_RECORDER};end`;
+}
+function pendingMeetingId() {
+  try {
+    const p = JSON.parse(safeStorage.get("bms.recordingFor") || "null");
+    if (p && Date.now() - p.at < 12 * 3600000 && meetingById(p.id)) return p.id;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+// 녹음 텍스트 변환 결과인지(시간·화자 표시가 많음), 요약인지 추측
+function looksLikeTranscript(text) {
+  const lines = text.split("\n").filter((l) => l.trim());
+  const timed = lines.filter((l) => /(화자|참석자|Speaker)\s*\d|\b\d{1,2}:\d{2}\b/.test(l)).length;
+  return timed >= 2 || text.length > 1500;
+}
+
+async function readSharedPayload() {
   const params = new URLSearchParams(location.search);
-  sharedText = [params.get("share_title"), params.get("share_text"), params.get("share_url")].filter(Boolean).join("\n").trim();
-  if (!sharedText) return;
-  history.replaceState(null, "", location.pathname);
-  $("#share-preview").textContent = sharedText.length > 300 ? sharedText.slice(0, 300) + "…" : sharedText;
+  if (params.has("shared")) {
+    try {
+      const cache = await caches.open("bms-share");
+      const metaRes = await cache.match("share-meta");
+      if (!metaRes) return null;
+      const meta = await metaRes.json();
+      const files = [];
+      for (const f of meta.files) {
+        const res = await cache.match(f.key);
+        if (res) files.push(new File([await res.blob()], f.name || "공유파일", { type: f.type || res.headers.get("content-type") || "" }));
+      }
+      await caches.delete("bms-share");
+      return { text: [meta.title, meta.text, meta.url].filter(Boolean).join("\n").trim(), files };
+    } catch (err) {
+      console.error(err);
+      return null;
+    }
+  }
+  // 예전 방식(GET) 호환
+  const text = [params.get("share_title"), params.get("share_text"), params.get("share_url")].filter(Boolean).join("\n").trim();
+  return text ? { text, files: [] } : null;
+}
+
+async function handleShare() {
+  shared = await readSharedPayload();
+  if (location.search) history.replaceState(null, "", location.pathname);
+  if (!shared || (!shared.text && !shared.files.length)) return (shared = null);
+
+  // .txt 파일은 내용을 텍스트로 합침
+  const audios = [];
+  for (const f of shared.files) {
+    if (f.type.startsWith("audio/") || /\.(m4a|mp3|wav|amr|3gp|aac|ogg|webm)$/i.test(f.name)) audios.push(f);
+    else if (f.type.startsWith("text/") || /\.txt$/i.test(f.name)) shared.text = `${shared.text}\n${await f.text()}`.trim();
+  }
+  shared.audios = audios;
+
+  $("#share-preview").textContent = shared.text ? (shared.text.length > 300 ? shared.text.slice(0, 300) + "…" : shared.text) : "";
+  $("#share-preview").hidden = !shared.text;
+  $("#share-target-label").hidden = !shared.text;
+  $("#share-files").textContent = audios.length ? `🎧 녹음 파일 ${audios.length}개: ${audios.map((a) => a.name).join(", ")} (회의에 저장됩니다)` : "";
+  const f = $("#share-form");
+  f.target.value = shared.text && looksLikeTranscript(shared.text) ? "transcript" : "summary";
+
   const nowIso = toLocalInput(new Date());
-  // 오늘 회의 → 최근 지난 회의 → 다가오는 회의 순으로 보여줌
-  const sorted = [...state.meetings].sort((a, b) => Math.abs(new Date(a.start) - Date.now()) - Math.abs(new Date(b.start) - Date.now()));
+  const pending = pendingMeetingId();
+  // 방금 녹음하러 간 회의 → 시간이 가까운 회의 순
+  const sorted = [...state.meetings].sort((a, b) => {
+    if (a.id === pending) return -1;
+    if (b.id === pending) return 1;
+    return Math.abs(new Date(a.start) - Date.now()) - Math.abs(new Date(b.start) - Date.now());
+  });
   $("#share-meeting").innerHTML =
-    sorted.map((m) => `<option value="${m.id}">${escapeHtml(m.title)} · ${fmtDateTime(m.start)}</option>`).join("") +
+    sorted.map((m) => `<option value="${m.id}">${m.id === pending ? "⭐ " : ""}${escapeHtml(m.title)} · ${fmtDateTime(m.start)}</option>`).join("") +
     `<option value="__new">+ 새 회의로 만들기 (${fmtDateTime(nowIso)})</option>`;
   $("#share-dialog").showModal();
 }
 
 $("#share-dialog").addEventListener("close", async () => {
-  if ($("#share-dialog").returnValue !== "save" || !sharedText) return;
+  if ($("#share-dialog").returnValue !== "save" || !shared) return;
   const f = $("#share-form");
   let m;
   if (f.meeting.value === "__new") {
@@ -535,16 +608,21 @@ $("#share-dialog").addEventListener("close", async () => {
     m = { id: newId(), title: `회의 ${now.getMonth() + 1}/${now.getDate()}`, series: "", start: toLocalInput(now), durationMin: 60, attendees: "", agenda: "", transcript: "", minutes: null, createdAt: now.toISOString() };
     state.meetings.push(m);
   } else m = meetingById(f.meeting.value);
-  if (f.target.value === "summary") {
+  const text = shared.text;
+  if (text && f.target.value === "summary") {
     const prev = m.minutes?.summaryText?.trim();
-    m.minutes = { ...(m.minutes || {}), summaryText: prev ? `${prev}\n\n${sharedText}` : sharedText, createdAt: new Date().toISOString() };
-  } else {
-    m.transcript = m.transcript?.trim() ? `${m.transcript.trimEnd()}\n${sharedText}` : sharedText;
+    m.minutes = { ...(m.minutes || {}), summaryText: prev ? `${prev}\n\n${text}` : text, createdAt: new Date().toISOString() };
+  } else if (text) {
+    m.transcript = m.transcript?.trim() ? `${m.transcript.trimEnd()}\n${text}` : text;
   }
   await db.put("meetings", m);
-  sharedText = "";
+  for (const a of shared.audios || []) {
+    await db.put("audios", { id: newId(), meetingId: m.id, blob: a, mime: a.type || "audio/mp4", durationSec: await audioDuration(a), createdAt: new Date().toISOString() });
+  }
+  const what = [text && (f.target.value === "summary" ? "회의록" : "회의 내용"), shared.audios?.length && "녹음 파일"].filter(Boolean).join("·");
+  shared = null;
   await openMeeting(m.id);
-  toast("공유 받은 내용을 저장했습니다.");
+  toast(`${what}을(를) '${m.title}'에 저장했습니다.`);
 });
 
 // ---------- 회의 상태 (종료 / 취소) ----------
@@ -839,6 +917,9 @@ $("#transcript-file").onchange = async (e) => {
   e.target.value = "";
   await saveTranscript();
 };
+$("#open-recorder-btn").onclick = openGalaxyRecorder;
+$("#open-recorder-btn").hidden = !isAndroid;
+$("#recorder-hint").hidden = !isAndroid;
 $("#stt-file").onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = "";

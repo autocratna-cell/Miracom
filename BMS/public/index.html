@@ -78,7 +78,11 @@
           <span class="muted small">회의 메모 화면이 열리고 녹음이 함께 진행됩니다. '회의정보 보기'를 누르면 녹음과 메모가 저장됩니다.</span>
         </div>
         <p id="support-note" class="muted small"></p>
-        <label class="ghost small btn">녹음 파일 불러오기<input type="file" id="audio-file" accept="audio/*" hidden /></label>
+        <div class="row wrap">
+          <button class="primary small" id="open-recorder-btn" hidden>📱 갤럭시 음성 녹음 열기</button>
+          <label class="ghost small btn">녹음 파일 불러오기<input type="file" id="audio-file" accept="audio/*" hidden /></label>
+        </div>
+        <p class="muted small" id="recorder-hint" hidden>음성 녹음 앱에서 녹음 → <b>텍스트 변환</b> → <b>공유 → BMS</b>를 누르면 이 회의에 바로 저장됩니다.</p>
         <div id="audio-list"></div>
       </div>
 
@@ -261,12 +265,13 @@
       <label>어느 회의에 저장할까요?
         <select name="meeting" id="share-meeting"></select>
       </label>
-      <label>저장할 곳
+      <label id="share-target-label">저장할 곳
         <select name="target">
+          <option value="transcript">회의 내용 (녹음 텍스트 변환)</option>
           <option value="summary">회의록 (요약)</option>
-          <option value="transcript">회의 내용 (받아쓰기 텍스트)</option>
         </select>
       </label>
+      <p id="share-files" class="muted small"></p>
       <div class="row end">
         <button value="cancel" class="ghost" formnovalidate>취소</button>
         <button value="save" class="primary">저장</button>

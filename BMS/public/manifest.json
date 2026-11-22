@@ -36,13 +36,28 @@
     }
   ],
   "share_target": {
-    "action": "./index.html",
-    "method": "GET",
-    "enctype": "application/x-www-form-urlencoded",
+    "action": "./share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
     "params": {
-      "title": "share_title",
-      "text": "share_text",
-      "url": "share_url"
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "files",
+          "accept": [
+            "text/plain",
+            ".txt",
+            "audio/*",
+            ".m4a",
+            ".mp3",
+            ".wav",
+            ".amr",
+            ".3gp"
+          ]
+        }
+      ]
     }
   }
 }
