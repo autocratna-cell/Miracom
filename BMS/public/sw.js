@@ -1,5 +1,5 @@
 // 서비스 워커: 앱 화면 캐시(오프라인에서도 열림) + 알림 클릭 처리
-const CACHE = "bms-v6";
+const CACHE = "bms-v7";
 const ASSETS = [
   "./",
   "index.html",
@@ -13,6 +13,8 @@ const ASSETS = [
   "js/recorder.js",
   "js/calendar-export.js",
   "js/tasks.js",
+  "js/stt.js",
+  "js/stt-worker.js",
 ];
 
 self.addEventListener("install", (e) => {
@@ -30,7 +32,8 @@ self.addEventListener("activate", (e) => {
 // 화면 파일은 네트워크 우선, 실패하면 캐시. API 요청은 캐시하지 않음.
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== "GET" || url.pathname.includes("/api/")) return;
+  // 다른 사이트(음성 인식 모델 등)는 캐시하지 않음 - 모델은 자체적으로 저장됨
+  if (e.request.method !== "GET" || url.origin !== self.location.origin || url.pathname.includes("/api/")) return;
   e.respondWith(
     fetch(e.request)
       .then((res) => {

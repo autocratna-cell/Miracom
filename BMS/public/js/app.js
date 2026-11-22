@@ -8,6 +8,7 @@ import {
   googleTodoLink,
 } from "./calendar-export.js";
 import { findTasks } from "./tasks.js";
+import { decodeAudio, transcribe, STT_MODELS, DEFAULT_STT_MODEL } from "./stt.js";
 
 // ---------- 공통 ----------
 const $ = (sel) => document.querySelector(sel);
@@ -80,6 +81,8 @@ async function load() {
   state.todos = await db.all("todos");
 }
 
+const STATUS_LABEL = { done: "종료됨", cancelled: "취소됨" };
+const isActive = (m) => !m.status || m.status === "scheduled";
 const groupKey = (m) => (m.series || m.title || "").trim();
 const meetingById = (id) => state.meetings.find((m) => m.id === id);
 
@@ -148,11 +151,13 @@ function renderCalendar() {
     const d = new Date(first);
     d.setDate(first.getDate() + i);
     const key = ymd(d);
-    const hasMeeting = state.meetings.some((m) => m.start.startsWith(key));
+    const dayMeetings = state.meetings.filter((m) => m.start.startsWith(key));
+    const hasMeeting = dayMeetings.length > 0;
+    const meetingDot = dayMeetings.some((m) => m.status !== "cancelled") ? "meeting" : "cancelled";
     const hasTodo = state.todos.some((t) => !t.done && t.dueDate === key);
     cells.push(`<button class="day ${d.getMonth() !== month.getMonth() ? "other" : ""} ${key === today ? "today" : ""} ${
       key === state.selectedDay ? "selected" : ""
-    }" data-day="${key}"><span>${d.getDate()}</span><i>${hasMeeting ? '<b class="dot meeting"></b>' : ""}${
+    }" data-day="${key}"><span>${d.getDate()}</span><i>${hasMeeting ? '<b class="dot ${meetingDot}"></b>' : ""}${
       hasTodo ? '<b class="dot todo"></b>' : ""
     }</i></button>`);
   }
@@ -166,14 +171,15 @@ function renderCalendar() {
     dayMeetings.map(meetingItem).join("") + dayTodos.map(todoItem).join("") ||
     `<p class="muted">일정이 없습니다. <button class="link" data-new-on="${state.selectedDay}">이 날 회의 잡기</button></p>`;
 
-  const upcoming = state.meetings.filter((m) => m.start >= toLocalInput(new Date())).slice(0, 5);
+  const upcoming = state.meetings.filter((m) => isActive(m) && m.start >= toLocalInput(new Date())).slice(0, 5);
   $("#upcoming-list").innerHTML = upcoming.map(meetingItem).join("") || `<p class="muted">예정된 회의가 없습니다.</p>`;
 }
 
 function meetingItem(m) {
   const open = carriedTodos(m).length;
-  return `<button class="item" data-open="${m.id}">
-    <span class="badge meeting">회의</span>
+  const st = STATUS_LABEL[m.status];
+  return `<button class="item ${m.status === "cancelled" ? "cancelled" : ""}" data-open="${m.id}">
+    <span class="badge meeting ${m.status || ""}">${st ? st.replace("됨", "") : "회의"}</span>
     <span class="grow"><strong>${escapeHtml(m.title)}</strong><small>${fmtDateTime(m.start)}${
       m.series ? ` · ${escapeHtml(m.series)}` : ""
     }${m.minutes ? " · 회의록 ✓" : ""}</small></span>
@@ -225,6 +231,12 @@ function renderMeeting() {
   $("#m-title").textContent = m.title;
   $("#m-meta").textContent = [fmtDateTime(m.start), `${m.durationMin}분`, m.series, m.attendees].filter(Boolean).join(" · ");
   $("#m-agenda").textContent = m.agenda || "";
+  const badge = $("#m-status");
+  badge.hidden = !STATUS_LABEL[m.status];
+  badge.className = `status-badge ${m.status || ""}`;
+  badge.textContent = STATUS_LABEL[m.status] || "";
+  $("#end-meeting-btn").textContent = m.status === "done" ? "종료 해제" : "회의 종료";
+  $("#cancel-meeting-btn").textContent = m.status === "cancelled" ? "취소 철회" : "회의 취소";
   $("#gcal-link").href = googleMeetingLink(m, meetingDescription(m));
 
   const carried = carriedTodos(m);
@@ -299,7 +311,8 @@ async function renderAudios() {
       div.className = "audio-row";
       div.innerHTML = `<span class="small">녹음 ${i + 1} · ${fmtClock(a.durationSec)}</span>
         <audio controls src="${url}"></audio>
-        <div class="row"><a class="mini" href="${url}" download="회의녹음-${i + 1}.${ext}">받기</a>
+        <div class="row"><button class="mini" data-stt-audio="${a.id}">텍스트 변환</button>
+        <a class="mini" href="${url}" download="회의녹음-${i + 1}.${ext}">받기</a>
         <button class="mini" data-del-audio="${a.id}">삭제</button></div>`;
       $("#audio-list").append(div);
     });
@@ -534,6 +547,101 @@ $("#share-dialog").addEventListener("close", async () => {
   toast("공유 받은 내용을 저장했습니다.");
 });
 
+// ---------- 회의 상태 (종료 / 취소) ----------
+async function setMeetingStatus(next) {
+  const m = meetingById(state.currentId);
+  if (!m) return;
+  const turningOff = m.status === next;
+  if (!turningOff && next === "cancelled" && !confirm(`'${m.title}' 회의를 취소할까요? 알림이 울리지 않습니다.`)) return;
+  m.status = turningOff ? "scheduled" : next;
+  m.statusAt = new Date().toISOString();
+  await db.put("meetings", m);
+  renderMeeting();
+  toast(turningOff ? "회의 상태를 되돌렸습니다." : next === "done" ? "회의를 종료했습니다." : "회의를 취소했습니다.");
+}
+
+// ---------- 녹음 → 텍스트 변환 ----------
+const sttModel = () => {
+  const v = safeStorage.get("bms.sttModel");
+  return STT_MODELS[v] ? v : DEFAULT_STT_MODEL;
+};
+let sttJob = null;
+let sttWakeLock = null;
+
+async function runStt(blob, label) {
+  if (sttJob) return toast("이미 변환 중입니다.");
+  const dlg = $("#stt-dialog");
+  const stage = $("#stt-stage");
+  const bar = $("#stt-progress");
+  const preview = $("#stt-preview");
+  const fmtMB = (b) => `${Math.round(b / 1048576)}MB`;
+  stage.textContent = "녹음 파일을 읽는 중…";
+  bar.removeAttribute("value");
+  preview.textContent = "";
+  $("#stt-cancel-btn").hidden = false;
+  $("#stt-close-btn").hidden = true;
+  dlg.showModal();
+  try {
+    sttWakeLock = await navigator.wakeLock?.request("screen");
+  } catch {
+    /* 미지원 */
+  }
+
+  const finish = async (msg) => {
+    sttJob = null;
+    stage.textContent = msg;
+    bar.max = 100;
+    bar.value = msg.startsWith("⚠️") ? 0 : 100;
+    $("#stt-cancel-btn").hidden = true;
+    $("#stt-close-btn").hidden = false;
+    sttWakeLock?.release?.().catch(() => {});
+    sttWakeLock = null;
+    await saveTranscript(true);
+  };
+
+  let audio;
+  try {
+    audio = await decodeAudio(blob);
+  } catch (err) {
+    console.error(err);
+    return finish("⚠️ 이 녹음 파일 형식은 읽을 수 없습니다. (m4a, mp3, wav, webm 지원)");
+  }
+  const totalSec = Math.round(audio.length / 16000);
+  const ta = $("#transcript");
+  ta.value = `${ta.value.trimEnd()}${ta.value.trim() ? "\n\n" : ""}[${label} 텍스트 변환]\n`;
+  let lines = 0;
+
+  sttJob = transcribe(audio, sttModel(), {
+    onStatus: (s, info) => {
+      if (s === "loading") stage.textContent = "음성 인식 모델 준비 중… (처음 한 번은 내려받기에 시간이 걸립니다)";
+      if (s === "ready") stage.textContent = `변환 시작 (${fmtClock(totalSec)} 분량, ${info.device === "webgpu" ? "GPU" : "CPU"} 사용)`;
+    },
+    onDownload: (loaded, total) => {
+      bar.max = 100;
+      bar.value = Math.round((loaded / total) * 100);
+      stage.textContent = `음성 인식 모델 내려받는 중… ${fmtMB(loaded)} / ${fmtMB(total)} (처음 한 번만)`;
+    },
+    onChunk: ({ index, total, startSec, text }) => {
+      bar.max = total;
+      bar.value = index + 1;
+      stage.textContent = `변환 중… ${index + 1} / ${total} 구간 (${fmtClock(Math.min(totalSec, (index + 1) * 30))} / ${fmtClock(totalSec)})`;
+      if (!text) return;
+      lines++;
+      ta.value += `[${fmtClock(startSec)}] ${text}\n`;
+      preview.textContent = text;
+      if (lines % 5 === 0) saveTranscript(true);
+    },
+  });
+  try {
+    const { cancelled } = await sttJob.done;
+    await finish(cancelled ? `중지했습니다. 변환된 부분까지 저장했습니다. (${lines}줄)` : `✓ 변환 완료 · ${lines}줄을 회의 내용에 넣었습니다.`);
+    if (!cancelled && !lines) stage.textContent = "변환은 끝났지만 인식된 말이 없습니다. 녹음 소리가 너무 작거나 비어 있을 수 있습니다.";
+  } catch (err) {
+    console.error(err);
+    await finish(`⚠️ 변환하지 못했습니다: ${err.message}\n인터넷 연결(처음 모델 내려받기)을 확인하거나, 설정에서 '빠름' 모델을 선택해 보세요.`);
+  }
+}
+
 // ---------- 회의 등록/수정 ----------
 let editingMeetingId = null;
 function openMeetingForm(meeting = null, preset = {}) {
@@ -635,6 +743,7 @@ function checkReminders() {
   }
   for (const m of state.meetings) {
     const start = new Date(m.start).getTime();
+    if (!isActive(m)) continue;
     if (start - now > lead || start < now - 60000 || sent[m.id] === m.start) continue;
     const todos = carriedTodos(m);
     const body = todos.length
@@ -670,7 +779,7 @@ async function importData(file) {
 
 // ---------- 이벤트 연결 ----------
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-day],[data-edit-todo],[data-new-on],[data-del-audio],[data-tab]");
+  const t = e.target.closest("[data-open],[data-day],[data-edit-todo],[data-new-on],[data-del-audio],[data-stt-audio],[data-tab]");
   if (!t) return;
   if (t.dataset.open) openMeeting(t.dataset.open);
   else if (t.dataset.day) {
@@ -682,6 +791,9 @@ document.addEventListener("click", async (e) => {
     if (!confirm("이 녹음을 삭제할까요?")) return;
     await db.delete("audios", t.dataset.delAudio);
     renderAudios();
+  } else if (t.dataset.sttAudio) {
+    const a = await db.get("audios", t.dataset.sttAudio);
+    if (a) runStt(a.blob, `녹음 ${fmtClock(a.durationSec)}`);
   } else if (t.dataset.tab) goTab(t.dataset.tab);
 });
 document.addEventListener("change", (e) => {
@@ -727,6 +839,26 @@ $("#transcript-file").onchange = async (e) => {
   e.target.value = "";
   await saveTranscript();
 };
+$("#stt-file").onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  await addAudioFile(file);
+  runStt(file, file.name.replace(/\.[^.]+$/, ""));
+};
+$("#stt-cancel-btn").onclick = () => {
+  sttJob?.cancel();
+  $("#stt-stage").textContent = "중지하는 중… (지금 구간을 마치면 멈춥니다)";
+};
+$("#stt-close-btn").onclick = () => $("#stt-dialog").close();
+$("#stt-dialog").addEventListener("cancel", (e) => sttJob && e.preventDefault());
+$("#stt-model").innerHTML = Object.entries(STT_MODELS)
+  .map(([id, label]) => `<option value="${id}">${label}</option>`)
+  .join("");
+$("#stt-model").value = sttModel();
+$("#stt-model").onchange = (e) => safeStorage.set("bms.sttModel", e.target.value);
+$("#end-meeting-btn").onclick = () => setMeetingStatus("done");
+$("#cancel-meeting-btn").onclick = () => setMeetingStatus("cancelled");
 $("#audio-file").onchange = (e) => {
   if (e.target.files[0]) addAudioFile(e.target.files[0]);
   e.target.value = "";

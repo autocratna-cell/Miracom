@@ -45,6 +45,7 @@
         <div class="meeting-head">
           <div>
             <h2 id="m-title"></h2>
+            <span id="m-status" class="status-badge" hidden></span>
             <p class="muted" id="m-meta"></p>
           </div>
           <button class="ghost small" id="edit-meeting-btn">수정</button>
@@ -88,6 +89,7 @@
           <button class="ghost small" id="save-transcript-btn">텍스트 저장</button>
           <button class="ghost small" id="paste-transcript-btn">붙여넣기</button>
           <label class="ghost small btn">텍스트 파일 불러오기<input type="file" id="transcript-file" accept=".txt,text/plain" hidden /></label>
+          <label class="primary small btn">🎧 녹음 파일 → 텍스트 변환<input type="file" id="stt-file" accept="audio/*" hidden /></label>
           <span id="save-state" class="muted small"></span>
         </div>
       </div>
@@ -124,7 +126,11 @@
         </div>
       </div>
 
-      <button class="danger small" id="delete-meeting-btn">회의 삭제</button>
+      <div class="meeting-actions">
+        <button class="primary" id="end-meeting-btn">회의 종료</button>
+        <button class="ghost" id="cancel-meeting-btn">회의 취소</button>
+        <button class="danger" id="delete-meeting-btn">회의 삭제</button>
+      </div>
     </section>
 
     <!-- 3. 할 일 -->
@@ -141,6 +147,13 @@
         <h3>📲 앱 설치</h3>
         <button class="primary small" id="install-btn" hidden>BMS 앱 설치하기</button>
         <p class="muted small" id="install-state"></p>
+      </div>
+      <div class="card">
+        <h3>녹음 → 텍스트 변환</h3>
+        <label>음성 인식 모델
+          <select id="stt-model"></select>
+        </label>
+        <p class="muted small">휴대폰 안에서 변환하므로 API 키가 필요 없고 내용이 밖으로 나가지 않습니다. 모델은 처음 한 번만 내려받으니 와이파이에서 쓰세요. 1시간 녹음은 수십 분 걸릴 수 있습니다. 더 빠르고 정확한 결과가 필요하면 갤럭시 음성 녹음 앱의 '텍스트 변환'을 이용하세요.</p>
       </div>
       <div class="card">
         <h3>알림</h3>
@@ -259,6 +272,19 @@
         <button value="save" class="primary">저장</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- 녹음 → 텍스트 변환 진행 -->
+  <dialog id="stt-dialog">
+    <h2>녹음 → 텍스트 변환</h2>
+    <p id="stt-stage" class="small"></p>
+    <progress id="stt-progress" max="100" value="0"></progress>
+    <p id="stt-preview" class="share-preview"></p>
+    <p class="muted small">변환하는 동안 앱을 열어 두세요. 변환된 글은 '회의 내용'에 바로 들어갑니다.</p>
+    <div class="row end">
+      <button class="ghost" id="stt-cancel-btn">중지</button>
+      <button class="primary" id="stt-close-btn" hidden>닫기</button>
+    </div>
   </dialog>
 
   <div id="toast" class="toast" hidden></div>
